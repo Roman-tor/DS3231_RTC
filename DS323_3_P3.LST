@@ -1,0 +1,985 @@
+00000h                                                           ; odczyt/zapis RTC DS3231  PODLACZONY POD P3 !!! /SDA PC.0, SCL-PC.4 w zlaczu uzytkownika
+00000h                                                           ; na CA nowy by phill , DS w P3          SDA - pin  18  SCL - pin 22   ZU50
+00000h                                                           ; odczyt z DS 3231 tylko po uruchomieniu programu, potem wyswietlanie czasu i daty /na LCD/ z RAM CA80                 
+00000h            PRINT:                EQU       01D4H          ; wyswietla tekst wg (HL), + PWysw np. CD D4 01 44
+00000h            PARAM:                EQU       01F4H          ; pobiera 4. znaki do HL + PWysw
+00000h                                                           ;CO:          EQU 01E0h
+00000h            COM:                  EQU       01ABH          ; wysw. znaku z rej. C, podaæ jeszcze PWYS
+00000h                                                           ;TI:          EQU 7     ; Pobranie znaku z jednoczesnym jego wyswietleniem w/g PWYS. [ tzw.ECHO ]
+00000h            EXPR:                 EQU       0213H          ; pob. liczb/4./ na stos
+00000h                                                           ;EXPRW:       EQU 19B4h ; j.w. ale tylko cyfry dziesietne
+00000h            CSTS:                 EQU       0FFC3H         ; czy klaw. wcisniety, WYJ - kod w rej. A
+00000h                                                           ;CZASK:       EQU 1225h ; wysw. czasu /MIN i GODZ/ bez zera poczatkowego /godz./
+00000h            CZASR:                EQU       1221H          ; wysw. czasu (SEK,MIN, GODZ/  bez zera pocz./z CA88/
+00000h            WYSKOM:               EQU       1217H          ; procedura wysw. dnia tyg. z CA88
+00000h            SETSEK:               EQU       0FFECH         ;  setne sek <0-99>
+00000h            SEK:                  EQU       0FFEDH         ; w CA80
+00000h            MIN:                  EQU       0FFEEH         ; j.w.
+00000h            GODZ:                 EQU       0FFEFH         ; j.w.
+00000h            TABD:                 EQU       123FH          ; tabl. dni, symbole literowe, np. PN, WT
+00000h            DNITYG:               EQU       0FFF0H         ; dzien tyg. ca80
+00000h            DNIM:                 EQU       0FFF1H         ; dzien miesiaca ca80
+00000h            MIES:                 EQU       0FFF2H
+00000h            LATA:                 EQU       0FFF3H         ; lata/rok ca80
+00000h            CYF0:                 EQU       0FFF7H         ;wysw. cyfry na pozycji 0 wyswietlacza CA80
+00000h            CYF1:                 EQU       0FFF8H         ;wysw. cyfry na pozycji 1
+00000h            CYF2:                 EQU       0FFF9H
+00000h            CYF3:                 EQU       0FFFAH
+00000h            CYF4:                 EQU       0FFFBH
+00000h            CYF5:                 EQU       0FFFCH
+00000h            CYF6:                 EQU       0FFFDH
+00000h            CYF7:                 EQU       0FFFEH
+00000h            KO3:                  EQU       0A23H          ; adres komunikatu "ERROR"
+00000h                                                           ;LADR:        EQU 20h ;wyswietlenie HL w postaci 4. liczb
+00000h            TABM:                 EQU       32DH           ; tabela ograniczen miesiecy CA80
+00000h                                                           ;TABC:        EQU 328h ; tablica ograniczen czasowych CA80
+00000h            STOS:                 EQU       0FF66H         ; pocz. stosu systemowego CA80
+00000h                                                           ; procedury I2C z mojej wersji CA80  - DS3231 podlaczony pod: SDA PC.0 SCL PC.4
+00000h            WE_WE:                EQU       8BH            ; SDA WEJ/H, SCL-WEJ/H
+00000h            WY_WE:                EQU       8AH            ; SDA WYJ/L  SCL-WEJ/H -podczas <spr_ACK>
+00000h            WE_WY:                EQU       83H            ; SDA WEJ/J  SCL-WYJ L
+00000h            WY_WY:                EQU       80H            ; SDA i SCL na L
+00000h            PORT_C:               EQU       0E2H           ; tu podlaczony DS - patrz wyzej
+00000h            CTRL:                 EQU       0E3H
+00000h            OUT_SDA:              EQU       PORT_C
+00000h            IN_SDA:               EQU       PORT_C
+00000h            SCL_BIT:              EQU       4H             ; SCL port PC.4 - moja wersja - SCL na PC4 - dla P1, P2 i P3, dla DS3231 na PC.5, SDA na PC.2
+00000h            SDA_BIT:              EQU       0H             ; SDA port PA0 lub PB0 lub PC.0, w zaleznosci j.w.czy P1 P2 lub P3
+00000h                                            
+00000h                                            
+00000h                                                           ;P_P3:        EQU 1E2Eh ; obsluga portu P3 - PC.0 - SDA. PC.4 - SCL
+00000h            ROZDZIEL:             EQU       1C15H          ; dzieli rej. A na dwie liczby/znaki i umieszcza w HL
+00000h            BLAD:                 EQU       1C6AH          ; wyswietl ERROR na ca80 i LCD przez dwie sekundy
+00000h                                            
+00000h            WYB_PORT:             EQU       0FD99H         ; przechowalnia wybranego portu /E3 lub E7/
+00000h            L1:                   EQU       80H            ; pocz. 1. linii LCD
+00000h            L2:                   EQU       0C0H           ; pocz. 2. linii
+00000h            L3:                   EQU       94H            ; pocz. 3 linii
+00000h            L4:                   EQU       0D4H           ; pocz. 4. linii
+00000h                                                           ; procedury obslugi DS-3231
+00000h            BUF_T:                EQU       0FD11H         ; tu przechow. odczytana temperatura
+00000h            TEMP_CA80:            EQU       0FD35H         ; tu przeliczona temp. po odczycie z DS-a
+00000h            SEK_P:                EQU       0FD22H         ;sekundy do potrzeb kontroli uplywu czasu do wysw. na LCD
+00000h            MIN_P:                EQU       SEK_P+1        ; minuty do potrzeb kontroli uplywu czasu do wysw. na LCD
+00000h            GODZ_P:               EQU       SEK_P+2
+00000h            STULECIE:             EQU       0FD20H         ; do wyswietlania calego rok na LCD np. 2021
+00000h            LATA_P:               EQU       STULECIE+1
+00000h            DZIEN_ROKU:           EQU       0FE15H         ; ktory dzien roku
+00000h            TYDZ_ROKU:            EQU       0FE19H         ; ktory tydzien roku
+00000h            USER_PORT0:           EQU       0E3H           ; slowo kontr. portu u¿ytkownika
+00000h            DS_PORT:              EQU       USER_PORT0
+00000h            POZ_SEK:              EQU       9BH            ; pozycja na LCD jednostek sekund, przesuw na lewo!!
+00000h            POZ_DNI:              EQU       0D4H           ; pozycja wysw. dni na LCD
+00000h            POZ_T:                EQU       POZ_SEK+3      ; pozycja wysw. temp. na LCD
+00000h            DATA_M:               EQU       0FE10H         ; pamiec pobranej daty: dzien, m-c, rok, stulecie, dzien tyg
+00000h                                            
+00000h                                                           ; ..3_A3 - wersja bez LCD
+00000h                                  ORG       0E000H
+0E000h            DS_ODCZ:              EQU       0D1H           ; "adres" odczytu z DS3231 - D1
+0E000h            DS_ZAP:               EQU       0D0H           ;"adres" zapisu do DS3231
+0E000h            ADR_ODCZ_DS:          EQU       0FD1FH         ; adres przechowywania bajtu /D1h/ na odczyt DS3231
+0E000h                                            
+0E000h            CZAS_DANE:                      
+0E000h 3EC3                             LD        A,0C3H         ; rozkaz C3 JP
+0E002h 3220FF                           LD        (0FF20H),A     ; od FF20 C3 xx (powrót po bledzie ACK)
+0E005h 21DFE1                           LD        HL,BRAK_DS     ; tu powrót po bledzie ACK
+0E008h 2221FF                           LD        (0FF21H),HL
+0E00Bh            CZAS_DANE1:                     
+0E00Bh 3ED1                             LD        A,DS_ODCZ      ; "adres" DS, tu 0D1h, zapis to 0D0h
+0E00Dh 321FFD                           LD        (ADR_ODCZ_DS),A
+0E010h 3E20                             LD        A,20H          ; aktualny wiek
+0E012h 3220FD                           LD        (STULECIE),A
+0E015h                                            
+0E015h            ODCZYT_CZASU:                   
+0E015h 3166FF                           LD        SP,STOS
+0E018h            ODCZ1:                          
+0E018h DD21EDFF                         LD        IX,SEK         ; na potrzeby wpisu danych  z odczytu DS3231
+0E01Ch CD6AE4                           CALL      START_I2C      ; start magistrali I2C
+0E01Fh CDFBE0                           CALL      CZYT_DS3231    ; odczyt czasu, daty, temperatury...
+0E022h 3AF3FF                           LD        A,(LATA)
+0E025h 3221FD                           LD        (LATA_P),A     ; do porownania, czy minelo stulecie
+0E028h CDF8E3                           CALL      SET_DNI_TYG    ; przelicz dni tygodnia na potrzeby CA88, liczy do "tylu"
+0E02Bh            ODCZ2:                          
+0E02Bh 26AA                             LD        H,0AAH         ; to wartosc na start programu, potem sa wart. rzeczywiste
+0E02Dh 2EAA                             LD        L,0AAH         ; unikac AA AA, gdyz podczas "SZUKANIA .." Aa AA jest znacznikiem pocz/konca programu
+0E02Fh 2223FD                           LD        (MIN_P),HL     ; do porównania min i godz, jesli nastapila zmiana
+0E032h 3AEDFF                           LD        A,(SEK)
+0E035h 3222FD                           LD        (SEK_P),A
+0E038h CD21E1                           CALL      WYSW_TEMP_DS3231
+0E03Bh CDE2E1                           CALL      OBL_DN_ROKU    ; oblicz dzien i tydzien roku, wyswietl
+0E03Eh            WYSW_CZAS:                                     ; na CA80 i na LCD
+0E03Eh 0E40                             LD        C,40H          ; znak kreski
+0E040h CDAB01                           CALL      COM            ; wyswietl kreske
+0E043h 12                               DEFB      12H
+0E044h CDAB01                           CALL      COM
+0E047h 15                               DEFB      15H
+0E048h            WYSW_CZAS1:                     
+0E048h CDC3FF                           CALL      CSTS           ; sprawdz klawisze
+0E04Bh 3808                             JR        C,XT1
+0E04Dh 21EDFF                           LD        HL,SEK         ; wysw. czas
+0E050h CD2112                           CALL      CZASR          ;  wysw. czasu bez zera pocz./z CA88/
+0E053h 18E9                             JR        WYSW_CZAS
+0E055h            XT1:                            
+0E055h FE04                             CP        4              ; klawisze 0 - 3
+0E057h 3008                             JR        NC,XT2
+0E059h 21F1FF                           LD        HL,DNIM        ; dni miesiaca, wysw. date
+0E05Ch CD2112                           CALL      CZASR          ; wysw. date
+0E05Fh 18DD                             JR        WYSW_CZAS
+0E061h                                            
+0E061h            XT2:                            
+0E061h FE0B                             CP        0BH            ; klawisze 4 - A - wysw. dzien tygodnia / CA80/
+0E063h 3011                             JR        NC,XT3         ; jesli klawisz >= od C
+0E065h            WYSW_DZ_TYG:                    
+0E065h 21CEE2                           LD        HL,TABD_1      ; tablica dni tygodnia /dla CA80 na DS3231/, po dwie litery, np. ND, SO
+0E068h 3AF0FF                           LD        A,(DNITYG)     ; dzien tygodnia  w RAM CA80
+0E06Bh 3D                               DEC       A
+0E06Ch 5F                               LD        E,A
+0E06Dh 1600                             LD        D,0
+0E06Fh 19                               ADD       HL,DE
+0E070h 19                               ADD       HL,DE
+0E071h CD1712                           CALL      WYSKOM         ; wysw. dwie litery na poz. 0 i 1 CA80, skrot dnia tygodnia
+0E074h 18C8                             JR        WYSW_CZAS
+0E076h                                            
+0E076h            XT3:                                           ; wcisnieto klawisz wiekszy niz B
+0E076h FE0C                             CP        0CH
+0E078h 2810                             JR        Z,SET_DS3231_C ; jesli klawisz C, ustaw zegar
+0E07Ah FE0D                             CP        0DH            ;
+0E07Ch 284A                             JR        Z,SET_DS3231_D ;  jesli klawisz D - ustaw date
+0E07Eh FE0E                             CP        0EH            ; jesli E - wysw. temperature
+0E080h CC21E1                           CALL      Z,WYSW_TEMP_DS3231
+0E083h FE0F                             CP        0FH            ; jesli F - wysw. dzien i tydzien roku na CA80
+0E085h CC5DE2                           CALL      Z,DZIEN_CA
+0E088h 18B4                             JR        WYSW_CZAS
+0E08Ah                                            
+0E08Ah            SET_DS3231_C:                                  ;  wcisnieto C, ustaw czas
+0E08Ah D7                               RST       10H            ; D7 40 czysc wyswietlacz
+0E08Bh 40                               DEFB      40H
+0E08Ch 21BFE2                           LD        HL,TEKST_POBT  ; na CA80 "CZAS"
+0E08Fh CDD401                           CALL      PRINT          ;
+0E092h 44                               DEFB      44H            ; PWYS
+0E093h 0E03                             LD        C,3            ; 3. parametry: godz, min, sek
+0E095h CD1302                           CALL      EXPR           ; pobranie parametrów i odlozenie na stos
+0E098h 20                               DEFB      20H            ; PWYSW
+0E099h                                                           ; tu mozna dodac XOR A, LD (S_SEK), A ; start setnych sek tez od 0 
+0E099h 21EDFF                           LD        HL,SEK         ; adres sekund w CA80
+0E09Ch 1E03                             LD        E,3            ; do zapisu 3. parametry
+0E09Eh                                            
+0E09Eh            SET_DS_3:                                      ;wyswietl komunikat i ustaw czas  DS3231
+0E09Eh C1                               POP       BC             ; zdejmowanie ze stosu:  godz, min, sek
+0E09Fh 71                               LD        (HL),C         ; wpis do RAM ca80,
+0E0A0h 23                               INC       HL
+0E0A1h 1D                               DEC       E
+0E0A2h 20FA                             JR        NZ,SET_DS_3
+0E0A4h 3EE3                             LD        A,DS_PORT      ; port uzytkownika - przylacze DS3231
+0E0A6h 3299FD                           LD        (WYB_PORT),A   ; przechow. adresu portu, potrzebne do procedury START_I2C
+0E0A9h CD6AE4                           CALL      START_I2C
+0E0ACh 3ED0                             LD        A,DS_ZAP       ; D0
+0E0AEh CD8AE4                           CALL      ZAP_BAJT
+0E0B1h 3E00                             LD        A,0            ; wpis od rejestru 0. w DS3231 - sekundy
+0E0B3h CD8AE4                           CALL      ZAP_BAJT
+0E0B6h 21EDFF                           LD        HL,SEK         ; poczatek zapisanego czasu w RAM CA80
+0E0B9h 0603                             LD        B,3            ; 3. parametry
+0E0BBh            SET_DS_31:                      
+0E0BBh 7E                               LD        A,(HL)
+0E0BCh 23                               INC       HL
+0E0BDh CD8AE4                           CALL      ZAP_BAJT       ; wpis do DS3231
+0E0C0h 10F9                             DJNZ      SET_DS_31
+0E0C2h CD77E4                           CALL      STOP
+0E0C5h C315E0                           JP        ODCZYT_CZASU
+0E0C8h                                            
+0E0C8h            SET_DS3231_D:                                  ; wcisnieto D, ustaw date
+0E0C8h D7                               RST       10H            ; D7 40 czysc wyswietlacz
+0E0C9h 40                               DEFB      40H
+0E0CAh 21C4E2                           LD        HL,TEKST_POBD  ; na CA80 "DATA"
+0E0CDh CDD401                           CALL      PRINT          ;
+0E0D0h 44                               DEFB      44H            ; PWYS
+0E0D1h 0E04                             LD        C,4            ; 4. parametry: rok, m-c, dz. m-ca, dzien tyg.
+0E0D3h CD1302                           CALL      EXPR           ; pobranie parametrów i odlozenie na stos
+0E0D6h 20                               DEFB      20H            ; PWYSW
+0E0D7h 21F0FF                           LD        HL,DNITYG      ;
+0E0DAh 1E04                             LD        E,4            ; ile parametrów zapisac w CA80
+0E0DCh                                            
+0E0DCh            SET_DS_4:                                      ;wyswietl komunikat, ustaw date  DS3231
+0E0DCh C1                               POP       BC             ;zdejmij ze stosu: dzien tyg, rok, m-c, dzien m-ca
+0E0DDh 71                               LD        (HL),C         ; i wpisuj od dnityg w RAM ca80
+0E0DEh 23                               INC       HL
+0E0DFh 1D                               DEC       E
+0E0E0h 20FA                             JR        NZ,SET_DS_4
+0E0E2h 3EE3                             LD        A,DS_PORT      ; port uzytkownika dodatkowy- przylacze DS3231
+0E0E4h 3299FD                           LD        (WYB_PORT),A   ; przechow. adresu portu, potrzebne do procedury START_I2C
+0E0E7h CD6AE4                           CALL      START_I2C
+0E0EAh 3ED0                             LD        A,DS_ZAP       ; D0
+0E0ECh CD8AE4                           CALL      ZAP_BAJT
+0E0EFh 3E03                             LD        A,3            ; wpis od rejestru 3. DS3231 - roku
+0E0F1h CD8AE4                           CALL      ZAP_BAJT
+0E0F4h 21F0FF                           LD        HL,DNITYG      ; poczatek zapisanej daty w RAM CA80
+0E0F7h 0604                             LD        B,4            ; 4. parametry
+0E0F9h 18C0                             JR        SET_DS_31
+0E0FBh                                            
+0E0FBh                                                           ;  ORG 0D0C0h
+0E0FBh            CZYT_DS3231:                    
+0E0FBh 3ED0                             LD        A,DS_ZAP       ;"adres" ukladu DS3231 do zapisu /D0/
+0E0FDh CD8AE4                           CALL      ZAP_BAJT       ; wpis bajtu i kontrola ACK
+0E100h 3E00                             LD        A,0            ; ustaw wskaznik rejestru na 0. - 1-szy rejestr DS3231 - sekundy
+0E102h CD8AE4                           CALL      ZAP_BAJT
+0E105h CD6AE4                           CALL      START_I2C      ; restart
+0E108h 3ED1                             LD        A,DS_ODCZ      ; D1
+0E10Ah CD8AE4                           CALL      ZAP_BAJT       ; wpis bajtu i kontrola ACK
+0E10Dh                                                           ; odczyt 7. bajtów      1    2    3     4       5      6    7         8
+0E10Dh 0607                             LD        B,7            ; 12. bajtów to: sek, min, godz, dz.tyg, dzien, m-c, rok, ALARM1-sek, AL1- min,
+0E10Fh                                                           ;9h-> AL1-godz, Ah->AL1-dz.tyg/MSB i dz.m-ca/LSB, Bh->AL2-min, Ch->AL2-godz,
+0E10Fh                                                           ;Dh->AL2-dz.tyg/MSB i dz.m-ca/LSB, Eh->Control, Fh-Control/Status, 10h->
+0E10Fh                                                           ; AgingOFFSET, bajt 11h/MSB/ i 12h/LSB/ to temperatura
+0E10Fh            CZYT_1:                         
+0E10Fh CDD6E4                           CALL      CZYTAJ_BAJT
+0E112h CDCBE4                           CALL      SEND_ACK       ; master -> ca80 potwierdza odebrany bajt
+0E115h 10F8                             DJNZ      CZYT_1
+0E117h CDD6E4                           CALL      CZYTAJ_BAJT
+0E11Ah CD77E4                           CALL      STOP
+0E11Dh CD2FE4                           CALL      SPR_CZ_D       ; sprawdz czas i date
+0E120h C9                               RET       
+0E121h                                            
+0E121h                                                           ; w DS3231 konwersja temperatury odbywa sie co 64 sek./nota katalogowa/
+0E121h                                                           ; jesli chcemy wywolac konwersje, ustaw bit 5. w Control Register /0Eh/
+0E121h                                                           ; nie zmianiamy pozostalych bitów!!
+0E121h            WYSW_TEMP_DS3231:                              ; wysw. temp. na LCD jesli uplynal INTERWAL_TEMP,
+0E121h 21FAFF                           LD        HL,CYF3
+0E124h CBFE                             SET       7,(HL)         ; znak, ze konwersja, dobicie kropki, tylko dla "optyki"
+0E126h CD12E4                           CALL      OP_100MS
+0E129h 07                               DEFB      7
+0E12Ah            KONW:                                          ; wymuszenie konwersji temperatury
+0E12Ah CD6AE4                           CALL      START_I2C
+0E12Dh 3ED1                             LD        A,DS_ODCZ      ;"adres" ukladu DS3231 do odczytu
+0E12Fh CD8AE4                           CALL      ZAP_BAJT       ; wpis bajtu i kontrola ACK
+0E132h 3E0E                             LD        A,0EH          ; Control Register
+0E134h CDD6E4                           CALL      CZYTAJ_BAJT    ; w rej. A aktualny stan rejestru kontrolnego
+0E137h 47                               LD        B,A            ; zapamietanie stanu rejestru
+0E138h CB6F                             BIT       5,A            ; sprawdz 5. bit rej.  /CB 6F
+0E13Ah 20EE                             JR        NZ,KONW
+0E13Ch                                                           ;
+0E13Ch CD6AE4                           CALL      START_I2C
+0E13Fh 3ED0                             LD        A,DS_ZAP       ;"adres" ukladu DS3231 do zapisu
+0E141h CD8AE4                           CALL      ZAP_BAJT
+0E144h 3E0E                             LD        A,0EH
+0E146h CD8AE4                           CALL      ZAP_BAJT
+0E149h 58                               LD        E,B            ; odtworzenie oryginalnej wartosci rej. kontrolnego DS-a /E/
+0E14Ah CBEB                             SET       5,E            ; ustaw 5. bit - wymuszenie konwersji
+0E14Ch CD8AE4                           CALL      ZAP_BAJT
+0E14Fh CD12E4                           CALL      OP_100MS       ; czas na konwersje temp., ok. 120 ms
+0E152h 02                               DEFB      2              ; dla pewnosci wartosc wieksza
+0E153h                                                           ;ld e, b ; odtworzenie wartosci rej. kontrolnego /E/ DS-a
+0E153h                                                           ;res 5, E ; na przyszlosc!
+0E153h CD6AE4                           CALL      START_I2C
+0E156h 3ED0                             LD        A,DS_ZAP       ; ustaw DS na zapis - bedzie odczyt od rej. 11h /temperat/
+0E158h CD8AE4                           CALL      ZAP_BAJT
+0E15Bh 3E11                             LD        A,11H          ; ustaw wskaznik rejestru na 11h - DS3231
+0E15Dh CD8AE4                           CALL      ZAP_BAJT
+0E160h CD6AE4                           CALL      START_I2C      ; restart
+0E163h 3ED1                             LD        A,DS_ODCZ      ; D1
+0E165h CD8AE4                           CALL      ZAP_BAJT       ; wpis bajtu i kontrola ACK
+0E168h                                                           ; odczyt 2. bajtów 11h i 12 h /temperatura/
+0E168h DD2111FD                         LD        IX,BUF_T
+0E16Ch CDD6E4                           CALL      CZYTAJ_BAJT    ; mlodszy bajt temp
+0E16Fh 67                               LD        H,A
+0E170h CDCBE4                           CALL      SEND_ACK       ; master -> ca80 potwierdza odebrany bajt
+0E173h CDD6E4                           CALL      CZYTAJ_BAJT    ; starszy bajt temp.
+0E176h DD2111FD                         LD        IX,BUF_T       ; powrót do poprzedniej wartosci w RAM przy wpisie temperat.
+0E17Ah CD77E4                           CALL      STOP
+0E17Dh                                            
+0E17Dh            WYS_TEMP_1:                     
+0E17Dh 3A11FD                           LD        A,(BUF_T)      ; wskazuje stopnie calk. temp /FD11h/
+0E180h CDB8E1                           CALL      ZAM_16_10_1BAJT; zamien bajt hex  na liczbe dziesietna
+0E183h 7D                               LD        A,L            ; w L do 99 st. C, w H setki st. C, jesli wyszlo z obliczen
+0E184h E5                               PUSH      HL             ; zapamietanie pelnych stopni
+0E185h                                            
+0E185h            OBL_T2:                                        ; wylicz dziesiate st. C
+0E185h 3A12FD                           LD        A,(BUF_T+1)    ; dziesiate st. Celsjusza
+0E188h 07                               RLCA      
+0E189h 07                               RLCA      
+0E18Ah 21DCE2                           LD        HL,TAB_DZ      ; tabela musi lezec w obrebie strony
+0E18Dh 85                               ADD       A,L
+0E18Eh 6F                               LD        L,A
+0E18Fh 7E                               LD        A,(HL)
+0E190h E1                               POP       HL             ; odtworzenie pelnych stopni
+0E191h 65                               LD        H,L
+0E192h 6F                               LD        L,A            ; H - pelne stopnie /0 do 99/, L - dziesiate i setne
+0E193h 2235FD                           LD        (TEMP_CA80),HL ; zapamietanie, dla CA80
+0E196h                                                           ;wysw_t_CA80: ; wysw. temp. na CA80, wcisnieto klawisz E
+0E196h D7                               RST       10H            ; D7 26
+0E197h 26                               DEFB      26H            ; czysc CYF7 i CYF8
+0E198h 2A35FD                           LD        HL,(TEMP_CA80) ; odtworzenie temp.
+0E19Bh 7C                               LD        A,H            ; 0-99 st. C
+0E19Ch 45                               LD        B,L
+0E19Dh DF                               RST       18H            ; DF wysw. rej. A
+0E19Eh 24                               DEFB      24H
+0E19Fh 21FBFF                           LD        HL,CYF4        ; cyfra na poz. 4 wysw. CA80
+0E1A2h CBFE                             SET       7,(HL)         ; dobicie kropki
+0E1A4h 78                               LD        A,B            ; dziesiate st. C
+0E1A5h DF                               RST       18H            ; DF
+0E1A6h 22                               DEFB      22H
+0E1A7h                                                           ; wysw. "*C" na CA80
+0E1A7h 0E63                             LD        C,63H          ; znak stopnia
+0E1A9h CDAB01                           CALL      COM
+0E1ACh 11                               DEFB      11H
+0E1ADh 0E39                             LD        C,39H          ; znak "C" Celsjusza
+0E1AFh CDAB01                           CALL      COM
+0E1B2h 10                               DEFB      10H
+0E1B3h CD12E4                           CALL      OP_100MS
+0E1B6h 10                               DEFB      10H            ; parametr opoznienia
+0E1B7h C9                               RET       
+0E1B8h                                            
+0E1B8h            ZAM_16_10_1BAJT:                               ; zamiana liczby 1. bajtowej na dziesietna
+0E1B8h F5                               PUSH      AF             ; WYJ: liczba zamieniona w HL
+0E1B9h 210000                           LD        HL,0           ; H - setki, L -0-99
+0E1BCh E6F0                             AND       0F0H           ; zeruj mlodsze bity
+0E1BEh 0F                               RRCA      
+0E1BFh 0F                               RRCA      
+0E1C0h 0F                               RRCA      
+0E1C1h 0F                               RRCA      
+0E1C2h 57                               LD        D,A            ; zapamietanie
+0E1C3h F1                               POP       AF
+0E1C4h E60F                             AND       0FH
+0E1C6h FE0A                             CP        0AH
+0E1C8h 3803                             JR        C,OBL_T1
+0E1CAh 06FA                             LD        B,0FAH         ; zamiana liczby >= 0A na dziesietna
+0E1CCh 90                               SUB       B
+0E1CDh            OBL_T1:                         
+0E1CDh 6F                               LD        L,A            ; zapamietaj
+0E1CEh 7A                               LD        A,D            ; ile razy dodac 16 st. Celsjusza
+0E1CFh FE00                             CP        0              ;
+0E1D1h 28B2                             JR        Z,OBL_T2       ;temp. < od 16 st. C
+0E1D3h 42                               LD        B,D
+0E1D4h            OBL_T4:                         
+0E1D4h 3E16                             LD        A,16H          ; ile razy dodac 16 st.
+0E1D6h            OBL_TEMP:                       
+0E1D6h 85                               ADD       A,L
+0E1D7h 27                               DAA       
+0E1D8h 6F                               LD        L,A            ; zapamietania
+0E1D9h 3001                             JR        NC,T_5
+0E1DBh 24                               INC       H              ; setki
+0E1DCh            T_5:                            
+0E1DCh 10F6                             DJNZ      OBL_T4
+0E1DEh C9                               RET       
+0E1DFh                                            
+0E1DFh                                            
+0E1DFh            BRAK_DS:                                       ; gdy brak DS3231
+0E1DFh C33EE0                           JP        WYSW_CZAS
+0E1E2h                                            
+0E1E2h            OBL_DN_ROKU:                                   ; oblicz i pokaz na LCD i CA80 aktualny dzien roku
+0E1E2h                                                           ;obliczanie dnia roku, do aktualnego dnia dodaj dni z poprzednich m-cy z tabeli <t_d_m>
+0E1E2h 210000                           LD        HL,0
+0E1E5h 2215FE                           LD        (DZIEN_ROKU),HL; zerowanie bufora przechowujacego dzien roku
+0E1E8h CD22E2                           CALL      SPR_MIES       ;m-c <1-12>, powrot-miesiac zmniejszony o 1
+0E1EBh FE00                             CP        0              ; czy byl styczen?
+0E1EDh 2814                             JR        Z,OBL_2        ; wyswietl dzien roku dla stycznia
+0E1EFh FE10                             CP        10H            ; pazdziernik?
+0E1F1h 3810                             JR        C,OBL_2
+0E1F3h 280C                             JR        Z,PAZDZ
+0E1F5h FE11                             CP        11H
+0E1F7h 2804                             JR        Z,LISTO
+0E1F9h                                                           ; grudzien
+0E1F9h 3E0C                             LD        A,0CH
+0E1FBh 1806                             JR        OBL_2
+0E1FDh            LISTO:                          
+0E1FDh 3E0B                             LD        A,0BH
+0E1FFh 1802                             JR        OBL_2
+0E201h            PAZDZ:                          
+0E201h 3E0A                             LD        A,0AH
+0E203h            OBL_2:                          
+0E203h 5F                               LD        E,A            ; miesiac
+0E204h 1600                             LD        D,0
+0E206h 219CE2                           LD        HL,T_D_M       ; tabela il. dni - 2. bajtowa, narastajaco dziesietnie
+0E209h 19                               ADD       HL,DE
+0E20Ah 19                               ADD       HL,DE          ; adres tabeli dni, ktore trzeba dodac do dnia biezacego
+0E20Bh 5E                               LD        E,(HL)         ; jednosci i dziesiatki dni
+0E20Ch 23                               INC       HL
+0E20Dh 56                               LD        D,(HL)         ;setki dni
+0E20Eh 62                               LD        H,D            ; zapamietanie
+0E20Fh 3AF1FF                           LD        A,(DNIM)
+0E212h 8B                               ADC       A,E            ; dodaj aktualny dzien do il. dni z tabelki
+0E213h 27                               DAA                      ; poprawka dziesietna
+0E214h 6F                               LD        L,A            ; zapamietanie, teraz H-setki dni, L=dziesiatki i jednosci dni roku
+0E215h 3001                             JR        NC,OBL_1
+0E217h 24                               INC       H              ; liczba dni >= 100 /dziesietnie/
+0E218h            OBL_1:                                         ; sprawdz czy data > 28.02 i czy rok przestepny
+0E218h 2215FE                           LD        (DZIEN_ROKU),HL; zapamietanie
+0E21Bh CD33E2                           CALL      SPR_R_P        ; sprawdz, czy rok przestepny, jesli tak to zwieksz dzien_roku o 1.
+0E21Eh CDE1E2                           CALL      OBL_TYDZ_ROKU  ; oblicz tydzien roku
+0E221h C9                               RET                      ; powrot z podprogramu
+0E222h                                            
+0E222h            SPR_MIES:                                      ;sprawdz, czy m-c prawidlowy <1-12>
+0E222h 3AF2FF                           LD        A,(MIES)       ; miesiac
+0E225h FE13                             CP        13H
+0E227h D28BE2                           JP        NC,BLAD_DATY   ; bledny miesiac >12
+0E22Ah B7                               OR        A
+0E22Bh 3D                               DEC       A              ; jesli bedzie pazdzier /10/ musimy zrobic DAA !!!
+0E22Ch 27                               DAA                      ; inaczej bedzie blad, wynik = 0F
+0E22Dh FEFF                             CP        0FFH
+0E22Fh CA8BE2                           JP        Z,BLAD_DATY
+0E232h C9                               RET       
+0E233h                                            
+0E233h            SPR_R_P:                                       ;rej. A-rok sprawdz, czy rok przestepny
+0E233h                                                           ; dodawaj 4, az >= 100, jesli  = 0, przestepny
+0E233h 3AF3FF                           LD        A,(LATA)
+0E236h 0604                             LD        B,4            ; rok przestepny co 4. lata
+0E238h            SPR_R1:                                        ;
+0E238h 80                               ADD       A,B            ; WYJ: jesli C i Z, rok przestepny
+0E239h 27                               DAA       
+0E23Ah 30FC                             JR        NC,SPR_R1
+0E23Ch C0                               RET       NZ
+0E23Dh                                                           ; rok przestepny
+0E23Dh 3AF2FF                           LD        A,(MIES)
+0E240h FE01                             CP        1
+0E242h C8                               RET       Z
+0E243h FE02                             CP        2
+0E245h 2802                             JR        Z,SPR_R3       ; jaki dzien
+0E247h 1806                             JR        SPR_R4
+0E249h            SPR_R3:                         
+0E249h 3AF1FF                           LD        A,(DNIM)       ; dzien miesiaca
+0E24Ch FE30                             CP        30H
+0E24Eh D8                               RET       C              ; dzien <= 28
+0E24Fh            SPR_R4:                         
+0E24Fh                                                           ; rok przestepny -> zwieksz dzien o 1
+0E24Fh 2A15FE                           LD        HL,(DZIEN_ROKU)
+0E252h 7D                               LD        A,L
+0E253h 3C                               INC       A
+0E254h 27                               DAA       
+0E255h 6F                               LD        L,A
+0E256h 3001                             JR        NC,SPR_R2
+0E258h 24                               INC       H
+0E259h            SPR_R2:                         
+0E259h 2215FE                           LD        (DZIEN_ROKU),HL; aktualny dzien roku
+0E25Ch C9                               RET       
+0E25Dh                                            
+0E25Dh            DZIEN_CA:                                      ; wysw. na CA80 dzien i tydzien roku
+0E25Dh D7                               RST       10H
+0E25Eh 23                               DEFB      23H            ; czysc 2 cyfry
+0E25Fh 3A19FE                           LD        A,(TYDZ_ROKU)
+0E262h DF                               RST       18H            ; DF wysw. rej A
+0E263h 20                               DEFB      20H            ; PWYSW
+0E264h FE0A                             CP        0AH
+0E266h 3002                             JR        NC,DZIEN_CA1
+0E268h D7                               RST       10H
+0E269h 11                               DEFB      11H
+0E26Ah            DZIEN_CA1:                      
+0E26Ah 2A15FE                           LD        HL,(DZIEN_ROKU)
+0E26Dh 7C                               LD        A,H
+0E26Eh FE00                             CP        0
+0E270h 2804                             JR        Z,WYSW_D_R2
+0E272h            WYSW_D_R3:                                     ;wysw. dzien roku 3. cyfrowy
+0E272h E7                               RST       20H            ; E7 wysw. rej. HL
+0E273h 43                               DEFB      43H
+0E274h 1809                             JR        OP_DR
+0E276h                                            
+0E276h            WYSW_D_R2:                                     ; wysw. dzien roku 2. cyfrowy
+0E276h E7                               RST       20H            ; E7 wysw. rej. HL
+0E277h 34                               DEFB      34H
+0E278h 7D                               LD        A,L
+0E279h FE0A                             CP        0AH
+0E27Bh 3002                             JR        NC,OP_DR
+0E27Dh                                                           ; dzien 1. cyfrowy, skasuj CYF5
+0E27Dh D7                               RST       10H
+0E27Eh 15                               DEFB      15H
+0E27Fh                                                           ; teraz skasowane beda 2. pierwsze znak i- bo wysw. tekstu "dr."
+0E27Fh            OP_DR:                                         ;opoznienie podczas wyswietlania dnia i tygodnia roku
+0E27Fh 21B4E2                           LD        HL,DN_R        ; "dr." dzien roku na CA80
+0E282h CDD401                           CALL      PRINT          ; na koncu bo wyzej jest kasowana 4. cyfra
+0E285h 26                               DEFB      26H
+0E286h CD12E4                           CALL      OP_100MS       ; opoznienie ok. 1 sek.
+0E289h 10                               DEFB      10H
+0E28Ah C9                               RET       
+0E28Bh                                            
+0E28Bh            BLAD_DATY:                                     ; jesli data wpisana blednie
+0E28Bh CD6A1C                           CALL      BLAD           ; wyswietl na CA80 i LCD "Error"
+0E28Eh 21B7E2                           LD        HL,ERR_D       ; ERR"
+0E291h CDD401                           CALL      PRINT
+0E294h 80                               DEFB      80H
+0E295h CD12E4                           CALL      OP_100MS
+0E298h 10                               DEFB      10H            ; parametr opoznienia
+0E299h C3C8E0                           JP        SET_DS3231_D   ; nowa data
+0E29Ch                                            
+0E29Ch            T_D_M:                                         ; tablica dni miesiecy narastajaco, dwubajtowe
+0E29Ch 0000310059                       DEFB      0,0,31H,0,59H,0,90H,0,20H,1,51H,1
+0E2A8h                                                           ;     1     2      3      4      5      6
+0E2A8h 8101120243                       DEFB      81H,1,12H,2,43H,2,73H,2,04H,3,34H,3;
+0E2B4h                                                           ;      7      8      9      10     11    12
+0E2B4h                                                           ; jesli np 18.IV to 18 dodajemy do 90 /marzec/
+0E2B4h                                                           ; teksty na CA80
+0E2B4h 5ED0FF     DN_R:                 DEFB      5EH,0D0H,0FFH  ; "dr." dzien roku na CA80
+0E2B7h 7950505E77 ERR_D:                DEFB      79H,50H,50H,5EH,77H,31H,66H,0FFH; Errdaty
+0E2BFh 395B776DFF TEKST_POBT:           DEFB      39H,5BH,77H,6DH,0FFH;"CZAS" set Time
+0E2C4h 5E773177FF TEKST_POBD:           DEFB      5EH,77H,31H,77H,0FFH;"DATA"  set Date
+0E2C9h 54773978FF NO_ACK:               DEFB      54H,77H,39H,78H,0FFH; "no ACK" dla ca80
+0E2CEh                                            
+0E2CEh            TABD_1:                                        ; tablica dni tyg. dla CA80, na potrzeby DS3231
+0E2CEh 5479                             DEFM      54H,79H        ; ND
+0E2D0h 6D5C                             DEFM      6DH,5CH        ; SO
+0E2D2h 7331                             DEFM      73H,31H        ; PT
+0E2D4h 391C                             DEFM      39H,1CH        ; CZ
+0E2D6h 6D50                             DEFM      6DH,50H        ; SR
+0E2D8h 1C31                             DEFM      1CH,31H        ; WT
+0E2DAh 7354                             DEFM      73H,54H        ; PN
+0E2DCh                                                           ; do CA 80
+0E2DCh            TAB_DZ:                                        ; tablica dziesietnych stopni Celsjusza
+0E2DCh 00                               DEFB      0
+0E2DDh 25                               DEFB      25H
+0E2DEh 50                               DEFB      50H
+0E2DFh 75                               DEFB      75H
+0E2E0h 75                               DEFB      75H
+0E2E1h                                            
+0E2E1h            OBL_TYDZ_ROKU:                                 ; oblicza, ktory tydzien roku wg daty w CA80
+0E2E1h CD31E3                           CALL      KAL_ROKU       ; jaki dzien tygodnia to 1.01 zadanego roku
+0E2E4h 3214FE                           LD        (DATA_M+4),A   ; zapamietanie w buforze daty /4. bajt
+0E2E7h 4F                               LD        C,A            ; PN-1, WT-2 ... SB 6, ND-7
+0E2E8h FE05                             CP        5              ; do czwartku wlacznie to 1. tydzien, PT, Sb lub Nd to ostatni tydz. starego roku
+0E2EAh 3804                             JR        C,OTR1         ;; jesli Carry, to 1. styczen/PN, WT, SR lub CZ/ - to 1. tydzien roku
+0E2ECh 0600                             LD        B,0
+0E2EEh 180A                             JR        OTR2
+0E2F0h            OTR1:                           
+0E2F0h 0601                             LD        B,1            ;
+0E2F2h 3A14FE                           LD        A,(DATA_M+4)   ; jaki dzien tygodnia
+0E2F5h FE01                             CP        1
+0E2F7h 2001                             JR        NZ,OTR2
+0E2F9h 05                               DEC       B
+0E2FAh            OTR2:                           
+0E2FAh 110000                           LD        DE,0           ; start od zera
+0E2FDh            OBL_TR0:                        
+0E2FDh B7                               OR        A              ; potrzebne przy odejmowaniu HL i DE
+0E2FEh 2A15FE                           LD        HL,(DZIEN_ROKU); aktualny dzien i m-c /zadany/
+0E301h ED52                             SBC       HL,DE
+0E303h 281D                             JR        Z,OBL_TR       ; obliczono tydzien roku
+0E305h                                                           ; szukaj zgodnosci dalej, zwieksz tydzien o 1
+0E305h 79                               LD        A,C            ; dzien tgodnia
+0E306h FE01                             CP        1              ; czy poniedzialek?
+0E308h 2004                             JR        NZ,OBL_TR2
+0E30Ah                                                           ; poniedzialek, zwieksz tydz_roku
+0E30Ah 78                               LD        A,B            ; tydzien
+0E30Bh 3C                               INC       A
+0E30Ch 27                               DAA       
+0E30Dh 47                               LD        B,A
+0E30Eh            OBL_TR2:                        
+0E30Eh 7B                               LD        A,E            ; zwiekszanie DE o jeden
+0E30Fh C601                             ADD       A,1
+0E311h 27                               DAA       
+0E312h 5F                               LD        E,A
+0E313h 7A                               LD        A,D
+0E314h CE00                             ADC       A,0
+0E316h 27                               DAA       
+0E317h 57                               LD        D,A            ; zwiekszono DE 0 jeden
+0E318h                                                           ; zwieksz dzien tyg., jesli PN to i <TYDZ_ROKU> o jeden
+0E318h 0C                               INC       C              ; dzien tygodnia
+0E319h 79                               LD        A,C
+0E31Ah FE08                             CP        8
+0E31Ch 3802                             JR        C,OBL_TR1      ; jeszcze nie PN
+0E31Eh 0E01                             LD        C,1            ; poniedzialek
+0E320h            OBL_TR1:                        
+0E320h 18DB                             JR        OBL_TR0
+0E322h            OBL_TR:                                        ; tydzien znaleziony
+0E322h 78                               LD        A,B
+0E323h 3219FE                           LD        (TYDZ_ROKU),A
+0E326h F5                               PUSH      AF
+0E327h CD02E4                           CALL      D_TYG_CA       ; wpisz dzien tygodnia do CA80 /FFF0h/
+0E32Ah F1                               POP       AF
+0E32Bh FE00                             CP        0              ;
+0E32Dh CCE7E3                           CALL      Z,KOR_TR       ; zrob korekcje <TYDZ_ROKU>
+0E330h C9                               RET                      ; POWROT z podprogramu <obl_tydz_roku>
+0E331h                                            
+0E331h            KAL_ROKU:                                      ; z C800 MIK 11 Emulator, str. 157
+0E331h                                                           ;#d[ROK][.][MIESIAC][.][DZIEN MIES][=] w oryginale
+0E331h 210101     UD:                   LD        HL,0101H       ; 01. stycznia
+0E334h 2210FE                           LD        (DATA_M),HL
+0E337h 3AF3FF                           LD        A,(LATA)       ; przechowywany rok CA80 /FFF3
+0E33Ah 3212FE                           LD        (DATA_M+2),A
+0E33Dh 3E20                             LD        A,20H          ; aktualny XXI wiek
+0E33Fh 3213FE                           LD        (DATA_M+3),A
+0E342h CD60E3     UD1:                  CALL      SROK           ;Szukanie roku
+0E345h ED5B10FE                         LD        DE,(DATA_M)    ;E-dzien, D-miesiac
+0E349h CD99E3                           CALL      SDZIEN         ;Szukanie dnia
+0E34Ch 280D                             JR        Z,U4A          ;Dzien znaleziono, C - dzien tygodnia w dniu 1 stycznia
+0E34Eh                                                           ;Error - data falszywa                       danego roku
+0E34Eh 21230A                           LD        HL,KO3         ;Error
+0E351h CDD401                           CALL      PRINT
+0E354h 50                               DEFB      50H
+0E355h                                                           ;Opoznienie 0.7 sek
+0E355h CD12E4                           CALL      OP_100MS       ;
+0E358h 07                               DEFB      7              ;
+0E359h 18D6                             JR        UD
+0E35Bh                                                           ;Wyswietlenie znalezionego dnia tygodnia
+0E35Bh                                                           ;WE: C - dzien tygodnia (1-Pn,2-Wt,3-Sr....)
+0E35Bh 79         U4A:                  LD        A,C            ; dzien tygodnia
+0E35Ch 3214FE                           LD        (DATA_M+4),A
+0E35Fh C9                               RET       
+0E360h                                            
+0E360h                                                           ;SROK - szukanie roku
+0E360h                                                           ;0000.01.01 - PIATEK ;dzien odniesienia,  ;0000 - rok przestepny
+0E360h                                                           ;# w rzeczywistosci powinno byc 0001.01.01 SOBOTA, nie bylo roku 0000, uwaga SK#
+0E360h                                                           ;365 dni - rok normalny, 366 dni - rok przestepny co 4 lata
+0E360h                                                           ;52 (tygodnie) * 7 = 364 dni
+0E360h                                                           ;WE: DATA+2 - etykieta wskazujaca zadany rok;
+0E360h                                                           ;    HL = zadany rok
+0E360h                                                           ;WY: C - dzien tygodnia w dniu 1 stycznia
+0E360h                                                           ;    B = 4 - rok przestepny
+0E360h 010504     SROK:                 LD        BC,405H        ;B=4 C=5 - piatek
+0E363h 110000                           LD        DE,0000H       ;Rok odniesienia (moja uwaga - powinno byc 0001 bo nie bylo roku 0000 n.e.) 
+0E366h B7                               OR        A              ;CY=0
+0E367h ED52                             SBC       HL,DE
+0E369h C8                               RET       Z              ;Zad.rok=0000
+0E36Ah                                                           ;ROK ZADANY > 0000
+0E36Ah 0C                               INC       C              ;0000 - przestepny
+0E36Bh 7B         P0001:                LD        A,E
+0E36Ch C601                             ADD       A,1
+0E36Eh 27                               DAA       
+0E36Fh 5F                               LD        E,A
+0E370h 7A                               LD        A,D
+0E371h CE00                             ADC       A,0            ;Dodanie CY
+0E373h 27                               DAA       
+0E374h 57                               LD        D,A
+0E375h 2A12FE                           LD        HL,(DATA_M+2)  ;Rok zadany
+0E378h 0C                               INC       C              ;Rok normalny
+0E379h 79                               LD        A,C
+0E37Ah FE08                             CP        8
+0E37Ch 3802                             JR        C,P2A
+0E37Eh 0E01                             LD        C,1            ;Poniedzialek
+0E380h 05         P2A:                  DEC       B              ;Czy rok przestepny ?
+0E381h 2010                             JR        NZ,P2C         ;Nie
+0E383h 0604                             LD        B,4            ;Rok przestepny
+0E385h B7                               OR        A              ;CY=0
+0E386h ED52                             SBC       HL,DE
+0E388h C8                               RET       Z              ;Rok przestepny
+0E389h 0C                               INC       C
+0E38Ah 79                               LD        A,C            ;Dzien tygodnia
+0E38Bh FE08                             CP        8
+0E38Dh 3802                             JR        C,P2B
+0E38Fh 0E01                             LD        C,1            ;Poniedzialek
+0E391h 18D8       P2B:                  JR        P0001          ;Nastepny rok
+0E393h B7         P2C:                  OR        A              ;CY=0
+0E394h ED52                             SBC       HL,DE
+0E396h 20D3                             JR        NZ,P0001       ;Nastepny rok
+0E398h                                                           ;Rok znaleziony
+0E398h C9                               RET       
+0E399h                                                           ;SDZIEN - szukanie dnia tygodnia w roku
+0E399h                                                           ;WE: B=4 - rok przestepny
+0E399h                                                           ;    C   - dzien tygodnia w dniu 1 stycznia
+0E399h                                                           ;    E   - dzien zadany
+0E399h                                                           ;    D   - miesiac zadany
+0E399h                                                           ;WY: C   - znaleziony dzien tygodnia
+0E399h                                                           ;    Z=0 - Error (rej.C - nieokreslony)
+0E399h                                                           ;ZMIENIA: HL,C,AF
+0E399h 78         SDZIEN:               LD        A,B
+0E39Ah FE04                             CP        4              ;Czy rok przestepny ?
+0E39Ch 2017                             JR        NZ,NPRZE
+0E39Eh                                                           ;Rok przestepny
+0E39Eh 7A                               LD        A,D            ;Miesiac zadany
+0E39Fh FE03                             CP        3
+0E3A1h D4DCE3                           CALL      NC,INCC        ;Miesiac 3-12
+0E3A4h FE02                             CP        2              ;Czy luty ?
+0E3A6h 200D                             JR        NZ,NPRZE       ;Nie luty
+0E3A8h 7B                               LD        A,E            ;Zadany dzien
+0E3A9h FE29                             CP        29H            ;Czy 29 luty
+0E3ABh 2008                             JR        NZ,NPRZE
+0E3ADh                                                           ;Zadany dzien 29 luty
+0E3ADh 0603                             LD        B,3            ;Dodanie 3 dni
+0E3AFh CDDCE3     LICZD:                CALL      INCC
+0E3B2h 10FB                             DJNZ      LICZD
+0E3B4h C9                               RET                      ;Z=1 dobrze
+0E3B5h 212D03     NPRZE:                LD        HL,TABM
+0E3B8h 0601                             LD        B,1            ;Licznik miesiecy
+0E3BAh 3E01       NASA:                 LD        A,1            ;Licznik dni
+0E3BCh BB         DNAST:                CP        E
+0E3BDh 2008                             JR        NZ,DNA
+0E3BFh                                                           ;Dzien zgodny
+0E3BFh F5                               PUSH      AF             ;Ochrona dnia
+0E3C0h 78                               LD        A,B            ;Miesiac biezacy
+0E3C1h BA                               CP        D              ;D-miesiac zadany
+0E3C2h 2002                             JR        NZ,NZG
+0E3C4h F1                               POP       AF
+0E3C5h C9                               RET                      ;Z=1 dobrze
+0E3C6h F1         NZG:                  POP       AF             ;Dzien biezacy
+0E3C7h B7         DNA:                  OR        A              ;CY=0
+0E3C8h 3C                               INC       A
+0E3C9h 27                               DAA       
+0E3CAh CDDCE3                           CALL      INCC
+0E3CDh BE                               CP        (HL)           ;Ost. dzien mies ?
+0E3CEh 38EC                             JR        C,DNAST        ;Nastepny dzien
+0E3D0h 78                               LD        A,B
+0E3D1h 3C                               INC       A
+0E3D2h 27                               DAA       
+0E3D3h 47                               LD        B,A            ;Biezacy miesiac
+0E3D4h 23                               INC       HL             ;Nastepny miesiac
+0E3D5h 3E39                             LD        A,39H          ;Str.21 w MIK08, TABM od 32D-339 /38 to koniec TABM
+0E3D7h BE                               CP        (HL)           ;mies 13 !!
+0E3D8h 20E0                             JR        NZ,NASA
+0E3DAh B7                               OR        A
+0E3DBh C9                               RET                      ;Z=0 Error
+0E3DCh                                                           ;INCC - zwiekszenie dni tygodnie w rej. C
+0E3DCh F5         INCC:                 PUSH      AF
+0E3DDh 0C                               INC       C
+0E3DEh 79                               LD        A,C
+0E3DFh FE08                             CP        8
+0E3E1h 3802                             JR        C,INC1
+0E3E3h 0E01                             LD        C,1            ;poniedzialek
+0E3E5h F1         INC1:                 POP       AF
+0E3E6h C9                               RET       
+0E3E7h                                            
+0E3E7h            KOR_TR:                                        ; korekta tygodnia roku
+0E3E7h                                                           ; jesli 1.01 zaczyna sie w PT i <TYDZ_ROKU> = 0, to 1. tydzien
+0E3E7h                                                           ;danego roku = 53., jesli SB lub ND to 52. tydzien
+0E3E7h 3A14FE                           LD        A,(DATA_M+4)   ; dzien tyg. 1. stycznia zadanego roku
+0E3EAh FE05                             CP        5              ; piatek
+0E3ECh 2806                             JR        Z,SET53
+0E3EEh 3E52                             LD        A,52H
+0E3F0h            KOR_TR1:                        
+0E3F0h 3219FE                           LD        (TYDZ_ROKU),A
+0E3F3h C9                               RET       
+0E3F4h            SET53:                          
+0E3F4h 3E53                             LD        A,53H
+0E3F6h 18F8                             JR        KOR_TR1
+0E3F8h                                            
+0E3F8h            SET_DNI_TYG:                                   ; "przelicz" dni tygodnia na potrzeby CA80
+0E3F8h 21F0FF                           LD        HL,DNITYG      ;liczenie do "tylu!"
+0E3FBh 7E                               LD        A,(HL)
+0E3FCh 2F                               CPL       
+0E3FDh 3C                               INC       A
+0E3FEh E607                             AND       7
+0E400h 77                               LD        (HL),A
+0E401h C9                               RET       
+0E402h                                                           ; obliczenie dnia tygodnia dla akt. daty i wpis do CA80
+0E402h            D_TYG_CA:                                      ; wpis obliczonego dnia tygodnia /aktualna data/ do CA80
+0E402h 79                               LD        A,C            ; dzien tygodnia
+0E403h 3D                               DEC       A
+0E404h FE00                             CP        0
+0E406h 2002                             JR        NZ,D_TYG_CA2
+0E408h            D_TYG_CA1:                                     ; jesli 0 to wpisz 7 /niedziela/
+0E408h 3E07                             LD        A,7
+0E40Ah            D_TYG_CA2:                      
+0E40Ah 47                               LD        B,A
+0E40Bh 3E08                             LD        A,8
+0E40Dh 90                               SUB       B
+0E40Eh 32F0FF                           LD        (DNITYG),A     ; wpis dnia tygodnia do CA80
+0E411h C9                               RET       
+0E412h                                            
+0E412h                                                           ; CENTURY: ; zmiana stulecia
+0E412h                                                           ;   ld a, (LATA) ; aktualne lata po 0:00:00 /polnoc/
+0E412h                                                           ;   cp 0
+0E412h                                                           ;  ret nz
+0E412h                                                           ;   ld L, A
+0E412h                                                           ;   ld a, (LATA_P)
+0E412h                                                           ;   cp L
+0E412h                                                           ;   ret z ; brak zmiany
+0E412h                                                           ;   ld hl, STULECIE
+0E412h                                                           ;   inc (HL)
+0E412h                                                           ;   ld a, (LATA)
+0E412h                                                           ;   ld (LATA_P), a
+0E412h                                                           ;   ret
+0E412h                                            
+0E412h                                                           ; odczyt rejestru 5. DS3231 i sprawdz. bitu 7. jesli 1 to nastapila
+0E412h                                                           ; zmiana roku z 99 na 00 /o polnocy/-  nota katalogowa str. 11
+0E412h                                                           ;ld a, DS_ZAP ;"adres" ukladu DS3231 do zapisu /D0/
+0E412h                                                           ;call ZAP_BAJT; wpis bajtu i kontrola ACK
+0E412h                                                           ;ld a, 5 ; ustaw wskaznik rejestru na 5. -  rejestr DS3231 - Month/Century
+0E412h                                                           ;call ZAP_BAJT
+0E412h                                                           ;call START_I2C ; restart
+0E412h                                                           ;ld a, DS_ODCZ ; D1
+0E412h                                                           ;call ZAP_BAJT; wpis bajtu i kontrola ACK
+0E412h                                                           ;call czytaj_bajt
+0E412h                                                           ;call send_ACK ; master -> ca80 potwierdza odebrany bajt
+0E412h                                                           ;call stop
+0E412h                                                           ;w rej. E odczytany bajt
+0E412h                                                           ;bit 7, E
+0E412h                                                           ;ret nz
+0E412h                                                           ; bit 7. = 1, zmiana roku z 99 na 00, nastepuje o polnocy
+0E412h                                                           ;ld hl, stulecie
+0E412h                                                           ;inc (hl)
+0E412h                                                           ;jp czas_dane1
+0E412h                                            
+0E412h                                                           ;  opóznienie
+0E412h            OP_100MS:                                      ; opózn. x 0,1s+ podaj param. /cd xx yy zz/
+0E412h E3                               EX        (SP),HL        ; zz - wielkosc opóznienia
+0E413h 7E                               LD        A,(HL)
+0E414h 23                               INC       HL
+0E415h E3                               EX        (SP),HL
+0E416h C5                               PUSH      BC
+0E417h E5                               PUSH      HL
+0E418h 47                               LD        B,A
+0E419h            OP1:                            
+0E419h 21183C                           LD        HL,3C18H
+0E41Ch            OP2:                            
+0E41Ch 2B                               DEC       HL
+0E41Dh 7D                               LD        A,L
+0E41Eh B4                               OR        H
+0E41Fh 20FB                             JR        NZ,OP2
+0E421h 10F6                             DJNZ      OP1
+0E423h E1                               POP       HL
+0E424h C1                               POP       BC
+0E425h C9                               RET       
+0E426h                                            
+0E426h            OP_2MS:                         
+0E426h E3                               EX        (SP),HL
+0E427h 5E                               LD        E,(HL)
+0E428h 23                               INC       HL
+0E429h E3                               EX        (SP),HL
+0E42Ah            OP_1:                           
+0E42Ah 76                               HALT      
+0E42Bh 1D                               DEC       E
+0E42Ch 20FC                             JR        NZ,OP_1
+0E42Eh C9                               RET       
+0E42Fh                                            
+0E42Fh            SPR_CZ_D:                       
+0E42Fh                                                           ;spr_date:  ; sprawdzenie, czy dzien jest zgodny z ograniczeniem dni
+0E42Fh 21F1FF                           LD        HL,DNIM
+0E432h 0603                             LD        B,3
+0E434h            SPR_DATE1:                      
+0E434h B7                               OR        A
+0E435h 7E                               LD        A,(HL)
+0E436h 3C                               INC       A
+0E437h 3D                               DEC       A
+0E438h 27                               DAA       
+0E439h 77                               LD        (HL),A
+0E43Ah 23                               INC       HL
+0E43Bh 10F7                             DJNZ      SPR_DATE1
+0E43Dh 21F2FF                           LD        HL,MIES
+0E440h 7E                               LD        A,(HL)         ; miesiac
+0E441h FE0A                             CP        0AH
+0E443h 3802                             JR        C,SPR_DZIEN1   ;gdy mies =< 9
+0E445h D606                             SUB       6              ;gdy mies > 9
+0E447h            SPR_DZIEN1:                     
+0E447h 47                               LD        B,A            ; zapamietanie miesiaca
+0E448h FE13                             CP        13H
+0E44Ah D28BE2                           JP        NC,BLAD_DATY   ; bledny miesiac >12       B7           or A
+0E44Dh 3D                               DEC       A
+0E44Eh 27                               DAA       
+0E44Fh FEFF                             CP        0FFH
+0E451h CA8BE2                           JP        Z,BLAD_DATY
+0E454h 21F1FF                           LD        HL,DNIM
+0E457h 7E                               LD        A,(HL)         ; dzien miesiaca
+0E458h 112D03                           LD        DE,TABM        ; tabela ograniczen dni w miesiacu
+0E45Bh 05                               DEC       B              ; miesiac
+0E45Ch 78                               LD        A,B
+0E45Dh 83                               ADD       A,E
+0E45Eh 5F                               LD        E,A
+0E45Fh 1A                               LD        A,(DE)         ; ograniczenie
+0E460h 3D                               DEC       A
+0E461h 21F1FF                           LD        HL,DNIM        ; w CA80
+0E464h 56                               LD        D,(HL)
+0E465h BA                               CP        D              ; porownanie z ograniczeniem w rej. A
+0E466h DA8BE2                           JP        C,BLAD_DATY
+0E469h C9                               RET       
+0E46Ah                                            
+0E46Ah            INI_LCD:                        
+0E46Ah            START_I2C:                                     ; i2c START 
+0E46Ah 3E8B                             LD        A,WE_WE        ; SDA i SCL na H
+0E46Ch D3E3                             OUT       (CTRL),A
+0E46Eh 3E8A                             LD        A,WY_WE        ; SDA na L ale SCL jeszcze H
+0E470h D3E3                             OUT       (CTRL),A
+0E472h 3E80                             LD        A,WY_WY
+0E474h D3E3                             OUT       (CTRL),A
+0E476h C9                               RET       
+0E477h                                            
+0E477h            STOP:                                          ; ??? i2c STOP 
+0E477h F5                               PUSH      AF
+0E478h 3E80                             LD        A,WY_WY
+0E47Ah D3E3                             OUT       (CTRL),A       ; SDA i SCL na L
+0E47Ch                                                           ;call sclset
+0E47Ch 3E8A                             LD        A,WY_WE        ;SDA jeszcze L, SCL na H
+0E47Eh D3E3                             OUT       (CTRL),A
+0E480h 3E8B                             LD        A,WE_WE
+0E482h D3E3                             OUT       (CTRL),A
+0E484h CD26E4                           CALL      OP_2MS
+0E487h 03                               DEFB      3              ; nota katalogowa, min 10 ms, "doswiadczalnie stwierdzono"
+0E488h F1                               POP       AF             ; 6 ms wystarczy
+0E489h C9                               RET       
+0E48Ah                                            
+0E48Ah            ZAP_BAJT:                                      ; zapisz bajt umieszczony w rej. A
+0E48Ah C5                               PUSH      BC
+0E48Bh F5                               PUSH      AF             ; ochrona danej do zapisu
+0E48Ch 4F                               LD        C,A
+0E48Dh 3E83                             LD        A,WE_WY
+0E48Fh D3E3                             OUT       (CTRL),A
+0E491h 0608                             LD        B,8            ; ile bitow
+0E493h F1                               POP       AF
+0E494h            ZA_B1:                          
+0E494h CB21                             SLA       C              ;B[7] => CY
+0E496h                                                           ; ustaw SDA na 0 lub 1, w zaleznoœci od CY
+0E496h DBE2                             IN        A,(IN_SDA)     ; odczyt portu, gdzie linia SDA - zmiana TYLKO bitu 0
+0E498h CB87                             RES       SDA_BIT,A      ; ???
+0E49Ah 3002                             JR        NC,WYS_0
+0E49Ch CBC7                             SET       SDA_BIT,A      ; wyslij "1"
+0E49Eh            WYS_0:                                         ; wyslij "0"
+0E49Eh F5                               PUSH      AF
+0E49Fh 3E80                             LD        A,WY_WY
+0E4A1h D3E3                             OUT       (CTRL),A
+0E4A3h F1                               POP       AF
+0E4A4h D3E2                             OUT       (OUT_SDA),A
+0E4A6h CD00E5                           CALL      SCLCLK         ; CLK na H, potem na L
+0E4A9h 10E9                             DJNZ      ZA_B1
+0E4ABh CDB0E4                           CALL      SPR_ACK
+0E4AEh C1                               POP       BC
+0E4AFh C9                               RET       
+0E4B0h                                            
+0E4B0h            SPR_ACK:                                       ; czy SLAVE wystawil ACK - stan L 
+0E4B0h C5                               PUSH      BC
+0E4B1h 3E83                             LD        A,WE_WY        ; SDA - WEJ, SCL - WYJ
+0E4B3h D3E3                             OUT       (CTRL),A
+0E4B5h 06FA                             LD        B,250          ; ilosc prob sprawdzenia czy ACK
+0E4B7h            GET1:                                          ; jesli przekroczy tê iloœæ, to blad
+0E4B7h 05                               DEC       B
+0E4B8h CA07E5                           JP        Z,BLAD_ACK
+0E4BBh DBE2                             IN        A,(IN_SDA)
+0E4BDh CB47                             BIT       SDA_BIT,A      ; testuj bit PC0
+0E4BFh 20F6                             JR        NZ,GET1
+0E4C1h CDF2E4                           CALL      SCLSET
+0E4C4h 00                               NOP       
+0E4C5h 00                               NOP       
+0E4C6h CDF9E4                           CALL      SCLCLR
+0E4C9h C1                               POP       BC
+0E4CAh C9                               RET       
+0E4CBh                                            
+0E4CBh            SEND_ACK:                       
+0E4CBh 3E80                             LD        A,WY_WY        ; SDA + SCL output
+0E4CDh D3E3                             OUT       (CTRL),A
+0E4CFh CDF2E4                           CALL      SCLSET         ; zegar SCL
+0E4D2h CDF9E4                           CALL      SCLCLR
+0E4D5h C9                               RET       
+0E4D6h                                            
+0E4D6h            CZYTAJ_BAJT:                                   ; odczyt bajtu
+0E4D6h C5                               PUSH      BC
+0E4D7h 3E83                             LD        A,WE_WY        ; SDA - in, SCL - out
+0E4D9h D3E3                             OUT       (CTRL),A
+0E4DBh 0608                             LD        B,8
+0E4DDh            CZ_B1:                          
+0E4DDh CDF2E4                           CALL      SCLSET
+0E4E0h DBE2                             IN        A,(IN_SDA)     ; odczyt portu, gdzie linia SDA
+0E4E2h 0F                               RRCA      
+0E4E3h CB11                             RL        C              ; przesuñ CY do C
+0E4E5h CDF9E4                           CALL      SCLCLR
+0E4E8h 10F3                             DJNZ      CZ_B1
+0E4EAh 79                               LD        A,C            ; odczytany bajt
+0E4EBh C1                               POP       BC
+0E4ECh DD7700                           LD        (IX+0),A       ; wpis do CA80 (IX) lub bufora przy wyœwietlaniu bajtów
+0E4EFh DD23                             INC       IX
+0E4F1h C9                               RET       
+0E4F2h            SCLSET:                                        ; SCL na H, bez zmiany SDA /SCL to PC.4         
+0E4F2h DBE2                             IN        A,(PORT_C)
+0E4F4h CBE7                             SET       SCL_BIT,A
+0E4F6h D3E2                             OUT       (PORT_C),A
+0E4F8h C9                               RET       
+0E4F9h                                            
+0E4F9h            SCLCLR:                                        ; SCL na L, bez zmiany SDA            
+0E4F9h DBE2                             IN        A,(PORT_C)
+0E4FBh CBA7                             RES       SCL_BIT,A
+0E4FDh D3E2                             OUT       (PORT_C),A
+0E4FFh C9                               RET       
+0E500h                                            
+0E500h            SCLCLK:                                        ;     "Clock"  SCL na  H, potem  -> L
+0E500h CDF2E4                           CALL      SCLSET
+0E503h CDF9E4                           CALL      SCLCLR
+0E506h C9                               RET       
+0E507h                                            
+0E507h            BLAD_ACK:                                      ; wyœw. komunikatów, gdy brak potwierdz. ACK z urz¹dzenia
+0E507h D5                               PUSH      DE             ; ochrona E
+0E508h 21C9E2                           LD        HL,NO_ACK      ;  "no_ACK"
+0E50Bh CDD401                           CALL      PRINT          ; wyœw. "no ACK" na ca80
+0E50Eh 44                               DEFB      44H            ; PWYSW
+0E50Fh CD12E4                           CALL      OP_100MS
+0E512h 07                               DEFB      7
+0E513h C9                               RET       
