@@ -1,0 +1,375 @@
+00000h                                                           ; odczyt/zapis RTC DS 1307 
+00000h            TOS:                  EQU       0FF66H         ; stos uzytkownika
+00000h                                                           ;M0        equ 10EEh ; zegar na CA88         ; Show clock CA 80 system procedure
+00000h            M01:                  EQU       1221H          ; j.w., bez "kresek" i jest powrot z tej procedury
+00000h            WYS_CZAS:             EQU       2D30H          ; ca80 by phill
+00000h            PRINT:                EQU       01D4H          ; wysw. komunikatu na CA
+00000h            EXPR:                 EQU       0213H          ; pobieranie liczb na stos, rej. C - ilo
+00000h            CSTS:                 EQU       0FFC3H         ; pobranie znaku z klawiatury
+00000h            PORT_A:               EQU       0E0H           ; (port A)
+00000h            PORT_B:               EQU       PORT_A+1       ; (port B)
+00000h            PORT_C:               EQU       PORT_A+2       ; (port C)
+00000h            CTRL:                 EQU       PORT_A+3       ; rejestr kontrolny /0E3h lub np. E7
+00000h            S_SEK:                EQU       0FFECH         ; setne sekundy w CA80
+00000h            SEK:                  EQU       0FFEDH
+00000h            MIN:                  EQU       SEK+1
+00000h            GODZ:                 EQU       SEK+2
+00000h            DNI_TYG:              EQU       0FFF0H
+00000h            DNIM:                 EQU       0FFF1H
+00000h            MIES:                 EQU       DNIM+1
+00000h            LATA:                 EQU       DNIM+2
+00000h            CYF0:                 EQU       0FFF7H
+00000h            CYF1:                 EQU       CYF0+1
+00000h            CYF2:                 EQU       CYF0+2
+00000h            CYF3:                 EQU       CYF0+3
+00000h            CYF4:                 EQU       CYF0+4
+00000h            CYF5:                 EQU       CYF0+5
+00000h            CYF6:                 EQU       CYF0+6
+00000h            CYF7:                 EQU       CYF0+7
+00000h                                                           ; WE_WE:        equ 89h ; dla PC /PA-98h; PB-8Ah
+00000h                                                           ; WE_WY:        equ 81h ; dla PC /PA-90h; PB-82h
+00000h                                                           ; WY_WE:        equ 88h ; dla PC, PA i PB
+00000h                                                           ; WY_WY:        equ 80h ; dla PC, PA i PB
+00000h                                                           ; CTRL dla 8255   bit!        7  6  5  4     3     2  1    0   
+00000h                                                           ;                       1  0  0  PA  PC.7-4  0  PB  PC.0-3   // WEJ - 1 WYJ 0
+00000h                                                           ; ver. ..P1a - zmiana START i STOP, sterownie pojedynczymi bitami
+00000h                                                           ;      ..P1b - SDA na PC.0, SCL na PC.5, (IY) wskazuje wybrany port podlaczenia DS1307/3231
+00000h                                                           ;      ..P1c - SDA na PC.2, SCL na PC.5, j.w.  
+00000h                                                           ;      ..P1c2 - obliczenia CL_L i CL_H   
+00000h                                                           ; PC.0-ZU50 pin 18, ZU64-pin 14a
+00000h                                                           ; PC.1          19           15a
+00000h                                                           ; PC.2          20           16a
+00000h                                                           ; PC.3          21           17a
+00000h                                                           ;
+00000h                                                           ; PC.4          22           13a
+00000h                                                           ; PC.5          23           12a
+00000h                                                           ; PC.6          24           11a
+00000h                                                           ; PC.7          25           10a
+00000h                                                           ; GND           50           23a, 23b
+00000h                                                           ; +5V           48           32a, 32b 
+00000h                                                           ; SDA powinno byc na bitach PC0-3, SCL na PC4-7    
+00000h            WYB_P:                EQU       PORT_C         ; tu port C /8255 - wybrany port
+00000h                                                           ;=====
+00000h            SDA_BIT:              EQU       0              ; SDA port PC.x - program automatycznie dopasuje odczytany bit!!
+00000h            SCL_BIT:              EQU       4              ; SCL port PC.y - automatycznie steruje CLK!
+00000h            DS_WR:                EQU       0D0H           ; zapis do DS1307/3231, A0 do EEprom I2C AT24Cx
+00000h            DS_RD:                EQU       DS_WR+1        ; odczyt z DS
+00000h            SDA_L:                EQU       SDA_BIT+SDA_BIT; 0FEA0h  ; 4h/PC.2 - do sterowania pojedynczymi bitami !!
+00000h            SDA_H:                EQU       SDA_L+1        ; sda_L+1 ; 5h
+00000h            CL_L:                 EQU       SCL_BIT+SCL_BIT; sda_L+2 ; 0Ah ;PC.5
+00000h            CL_H:                 EQU       CL_L+1         ; sda_L+3 ; 0Bh
+00000h            PORT_DS:              EQU       0FEA0H         ; sda_L+4 ; PA/E0 lub PB/E1 lub PC/E2 
+00000h                                                           ; dla DS1307/3231, SDA-PC.0-pin 14a, SCL-PC.4-pin 13a, piny - patrz wyzej ZU64
+00000h                                  ORG       0C000H         ; pocz. programu
+0C000h 211FC1                           LD        HL,SDA_SCL
+0C003h CDD401                           CALL      PRINT
+0C006h 80                               DEFB      80H
+0C007h CDF6C1                           CALL      OP_100MS
+0C00Ah 08                               DEFB      8
+0C00Bh            RTC_DS1307:                                    ; jesli mamy inne piny  zmiana w EB08h/sda_bit i EB12h/scl_bit  - TYLKO na porcie PC ukladu 8255
+0C00Bh 3166FF                           LD        SP,TOS
+0C00Eh                                                           ; ld IY, dni_tyg
+0C00Eh D7                               RST       10H            ; D7
+0C00Fh 80                               DEFB      80H
+0C010h CD9CC0                           CALL      START_I2C
+0C013h 3ED0                             LD        A,DS_WR        ; adres wyboru DS1307 /3231
+0C015h CD5CC0                           CALL      ZAP_BAJT       ; zapis bajtu i kontrola ACK
+0C018h 3E00                             LD        A,0            ; odczyt od rejestru 0 -SEK
+0C01Ah CD5CC0                           CALL      ZAP_BAJT
+0C01Dh DD21EDFF                         LD        IX,0FFEDH      ; od sekund w CA80
+0C021h CD9CC0                           CALL      START_I2C      ; ponowny start magistrali I2C
+0C024h 3ED1                             LD        A,DS_RD        ; D1
+0C026h CD5CC0                           CALL      ZAP_BAJT
+0C029h                                                           ; odczyt 7. bajtów:SEK, MIN, GODZ, DTYG, DZIEN, M-C, ROK
+0C029h 0607                             LD        B,7            ; i zapis do CA80 od FFED - SEK
+0C02Bh            DS_ODCZ:                        
+0C02Bh C5                               PUSH      BC
+0C02Ch CDC3C0                           CALL      CZYT_BAJT      ; odczyt bajtu i potwierdzenie ACK
+0C02Fh C1                               POP       BC
+0C030h 10F9                             DJNZ      DS_ODCZ
+0C032h CDB1C0                           CALL      STOP
+0C035h                                                           ; zamiana dnia_tyg na "odpowiedni" dla CA80, bo CA liczy do "tylu"
+0C035h 21F0FF                           LD        HL,DNI_TYG
+0C038h 5E                               LD        E,(HL)
+0C039h 3E08                             LD        A,8
+0C03Bh 93                               SUB       E
+0C03Ch 77                               LD        (HL),A
+0C03Dh                                                           ;
+0C03Dh            DS_O1:                          
+0C03Dh 21EDFF                           LD        HL,0FFEDH      ; sek
+0C040h CD2112                           CALL      M01            ; wysw. czas na CA80
+0C043h CDC3FF                           CALL      CSTS
+0C046h FE0C                             CP        0CH            ; klaw. C - ustaw czas
+0C048h CA28C1                           JP        Z,SET_DS1307_C
+0C04Bh FE0D                             CP        0DH            ; ustaw date
+0C04Dh CA5CC1                           JP        Z,SET_DS1307_D
+0C050h FE17                             CP        17H            ; klawisz F1/Z - gorny lewy 
+0C052h CA80C1                           JP        Z,SET_AKTUAL
+0C055h FE14                             CP        14H            ; klaw. F4/W - dolny lewy
+0C057h CAB1C1                           JP        Z,SHOW_AKTUAL  ; pokaz czas i date aktualizacji
+0C05Ah 18E1                             JR        DS_O1
+0C05Ch                                            
+0C05Ch            ZAP_BAJT:                                      ; wpis bajtu do DS1307, w A dana do zapisu
+0C05Ch                                                           ;PC.5/SCL, PC.2/SDA, jesli PA, PC jako WEJSCIE
+0C05Ch                                                           ; WYJ: jesli B = 0 -  brak urzadzenia/brak ACK 
+0C05Ch 5F                               LD        E,A            ; w A bajt do zapisu
+0C05Dh            ZAP1:                           
+0C05Dh 1608                             LD        D,08H          ;ilosc bitów
+0C05Fh            ZAP:                            
+0C05Fh 7B                               LD        A,E            ; odtworzenie danej do wpisu
+0C060h 07                               RLCA                     ; przesuñ na lewo /na znacznik C/
+0C061h 5F                               LD        E,A            ; zapamiêtanie
+0C062h 3822                             JR        C,ZAPJEDYNKE   ; wyslij "1"
+0C064h                                                           ;wyslanie "0"
+0C064h 3E80                             LD        A,80H          ; PA PB i PC jako WYJ/ RES SDA i RES SCL
+0C066h D3E3                             OUT       (CTRL),A       ; ustawia dane "0" na SDA
+0C068h            ZEGAR:                          
+0C068h CD8CC0                           CALL      CLK
+0C06Bh 15                               DEC       D              ; czy 8. bit?
+0C06Ch 20F1                             JR        NZ,ZAP
+0C06Eh            ACK:                            
+0C06Eh 3E89                             LD        A,89H          ; PC.5 i PC.2 -> WEJ, poczatek 9. cyklu SCL "1"
+0C070h D3E3                             OUT       (CTRL),A
+0C072h 00                               NOP       
+0C073h C5                               PUSH      BC
+0C074h 06FE                             LD        B,0FEH         ; ilosc prób sprawdz. ACK
+0C076h            ACK_0:                          
+0C076h 05                               DEC       B
+0C077h CAECC0                           JP        Z,NO_A         ; brak ACK
+0C07Ah DBE2                             IN        A,(PORT_C)     ; (C) ; odczyt portu PC
+0C07Ch CB47                             BIT       SDA_BIT,A      ; testuj bit 0 (SDA=0 potwierdzenie, SDA=1 brak
+0C07Eh 20F6                             JR        NZ,ACK_0       ; czekaj a¿ ACK
+0C080h C1                               POP       BC
+0C081h 3E90                             LD        A,90H          ; PA - WEJ, PB I PC WYJ
+0C083h D3E3                             OUT       (CTRL),A       ;PA.0 WEJ, PC.4 WYJ, koniec 9. cyklu SCL /SDA "1", SCL "0"
+0C085h C9                               RET       
+0C086h                                            
+0C086h            ZAPJEDYNKE:                     
+0C086h 3E81                             LD        A,81H          ;  PC.0-3 WEJ/SDA/, PC.5 WYJ/SCL/
+0C088h D3E3                             OUT       (CTRL),A       ; ustawia dane "1" na SDA
+0C08Ah 18DC                             JR        ZEGAR
+0C08Ch                                            
+0C08Ch            CLK:                                           ; port PC.5 - sterowanie bitami
+0C08Ch 3E09                             LD        A,CL_H         ; 0BH
+0C08Eh D3E3                             OUT       (CTRL),A       ; SET SCL
+0C090h 3D                               DEC       A              ; RES SCL
+0C091h            CL1:                            
+0C091h D3E3                             OUT       (CTRL),A
+0C093h C9                               RET       
+0C094h                                            
+0C094h            SCLH:                                          ; SCL /port PC.5/ na H
+0C094h 3E09                             LD        A,CL_H         ;0BH
+0C096h 18F9                             JR        CL1
+0C098h                                            
+0C098h            SCLL:                           
+0C098h 3E08                             LD        A,CL_L         ;0Ah  ; ustaw SCL /port PC.5/ na L
+0C09Ah 18F5                             JR        CL1
+0C09Ch                                            
+0C09Ch            START_I2C:                      
+0C09Ch 3E80                             LD        A,80H          ; jako wyjsciowe
+0C09Eh D3E3                             OUT       (CTRL),A
+0C0A0h 3E01                             LD        A,SDA_H
+0C0A2h D3E3                             OUT       (CTRL),A
+0C0A4h 3E09                             LD        A,CL_H
+0C0A6h D3E3                             OUT       (CTRL),A
+0C0A8h 3E00                             LD        A,SDA_L
+0C0AAh D3E3                             OUT       (CTRL),A
+0C0ACh 3E08                             LD        A,CL_L
+0C0AEh D3E3                             OUT       (CTRL),A
+0C0B0h C9                               RET       
+0C0B1h                                            
+0C0B1h            STOP:                           
+0C0B1h 3E80                             LD        A,80H          ; jako wyjsciowe
+0C0B3h D3E3                             OUT       (CTRL),A
+0C0B5h 3E00                             LD        A,SDA_L
+0C0B7h D3E3                             OUT       (CTRL),A
+0C0B9h 3E09                             LD        A,CL_H
+0C0BBh D3E3                             OUT       (CTRL),A
+0C0BDh 3E01                             LD        A,SDA_H
+0C0BFh D3E3                             OUT       (CTRL),A
+0C0C1h 76                               HALT      
+0C0C2h C9                               RET       
+0C0C3h                                            
+0C0C3h            CZYT_BAJT:                                     ; odczyt bajtu i zapis do RAM wg (IX)
+0C0C3h            CZYT1:                          
+0C0C3h 3E81                             LD        A,81H          ; PC.0-3 WEJ - SDA "1" ,PC.5 WYJ - SCL "0 "
+0C0C5h D3E3                             OUT       (CTRL),A
+0C0C7h 1608                             LD        D,8            ; D - il. bitów = 8, E - jako bufor do odbieranych bitów = 0
+0C0C9h            CZYT:                                          ; moze byc tylko ld d, 8  bo rej E "idzie" od zera
+0C0C9h CD94C0                           CALL      SCLH           ; ustaw SCL na H 
+0C0CCh DBE2                             IN        A,(PORT_C)     ;(C) ; odczyt portu PC
+0C0CEh F5                               PUSH      AF
+0C0CFh CD98C0                           CALL      SCLL           ; ustaw SCL na L
+0C0D2h 3E00                             LD        A,SDA_BIT      ; na ktorym bicie port SDA
+0C0D4h 3C                               INC       A
+0C0D5h 47                               LD        B,A            ; ile przesuniec na prawo 
+0C0D6h F1                               POP       AF             ; odtworz odczytany bajt 
+0C0D7h            CZ1:                            
+0C0D7h 0F                               RRCA                     ; przesuñ na CY
+0C0D8h 10FD                             DJNZ      CZ1            ; bo BIT PC.2 /trzeci!
+0C0DAh CB13                             RL        E              ; przesun CY na bit 0 rej. E  
+0C0DCh 15                               DEC       D
+0C0DDh 20EA                             JR        NZ,CZYT        ; czy ostatni bit?
+0C0DFh DD7300                           LD        (IX+0H),E      ; zapisanie w pamieci
+0C0E2h DD23                             INC       IX             ; ustaw RAM na zapis nastepnego bajtu
+0C0E4h                                                           ;
+0C0E4h            M_ACK:                                         ; Master /CA80/ wystawia ACK /"0"/ na SDA
+0C0E4h 3E80                             LD        A,80H          ; PA, PB, PC - WYJ, stan L
+0C0E6h D3E3                             OUT       (CTRL),A       ; ustaw SDA na L /czytaj nastepne bajty
+0C0E8h CD8CC0                           CALL      CLK
+0C0EBh C9                               RET       
+0C0ECh                                            
+0C0ECh            NO_A:                                          ; gdy blad ACK
+0C0ECh 2116C1                           LD        HL,NO_ACK
+0C0EFh CDD401                           CALL      PRINT
+0C0F2h 80                               DEFB      80H
+0C0F3h CF                               RST       8              ; CF - czekaj na klawisz
+0C0F4h C30BC0                           JP        RTC_DS1307
+0C0F7h                                            
+0C0F7h DDE2                             DEFB      0DDH,0E2H      ; marker nazwy
+0C0F9h 2052544320                       DEFM      " RTC DS1307 PC 0_4",255
+0C10Ch 395B776DFF TEKST_POBT:           DEFB      39H,5BH,77H,6DH,0FFH;"CZAS" set Time
+0C111h 5E773177FF TEKST_POBD:           DEFB      5EH,77H,31H,77H,0FFH;"DATA"  set Date
+0C116h 54DC7739F8 NO_ACK:               DEFB      54H,0DCH,77H,39H,0F8H,50H,31H,58H,255; "no.ACK.rTC" dla ca80
+0C11Fh 5EF73F0039 SDA_SCL:              DEFB      5EH,0F7H,3FH,0,39H,0B8H,8,66H,255; dA0 CL_4 - DATA 0 CLK 4
+0C128h                                            
+0C128h            SET_DS1307_C:                                  ;  wcisnieto C, ustaw czas
+0C128h D7                               RST       10H            ; D7 40 czysc wyswietlacz
+0C129h 40                               DEFB      40H
+0C12Ah 210CC1                           LD        HL,TEKST_POBT  ; na CA80 "CZAS"
+0C12Dh CDD401                           CALL      PRINT          ;
+0C130h 44                               DEFB      44H            ; PWYS
+0C131h 0E03                             LD        C,3            ; 3. parametry: godz, min, sek
+0C133h CD1302                           CALL      EXPR           ; pobranie parametrów i odlozenie na stos
+0C136h 20                               DEFB      20H            ; PWYSW
+0C137h                                                           ;
+0C137h            SET_DS_3:                                      ;wyswietl komunikat i ustaw czas  DS1307/DS3231
+0C137h                                                           ; wpis do DS1307
+0C137h CD9CC0                           CALL      START_I2C
+0C13Ah 3ED0                             LD        A,DS_WR        ; D0
+0C13Ch CD5CC0                           CALL      ZAP_BAJT
+0C13Fh 3E00                             LD        A,0            ; wpis od rejestru 0. w DS1307/DS3231 - sekundy
+0C141h CD5CC0                           CALL      ZAP_BAJT
+0C144h 0603                             LD        B,3            ; 3. parametry
+0C146h FD21EDFF                         LD        IY,SEK
+0C14Ah            SET_DS_31:                      
+0C14Ah D1                               POP       DE
+0C14Bh 7B                               LD        A,E
+0C14Ch FD7700                           LD        (IY),A         ; wpis do CA80
+0C14Fh FD23                             INC       IY
+0C151h CD5CC0                           CALL      ZAP_BAJT       ; wpis do DS1307/DS3231
+0C154h 10F4                             DJNZ      SET_DS_31
+0C156h CDB1C0                           CALL      STOP
+0C159h C33DC0                           JP        DS_O1
+0C15Ch                                            
+0C15Ch            SET_DS1307_D:                                  ; wcisnieto D, ustaw date
+0C15Ch D7                               RST       10H            ; D7 40 czysc wyswietlacz
+0C15Dh 40                               DEFB      40H
+0C15Eh 2111C1                           LD        HL,TEKST_POBD  ; na CA80 "DATA"
+0C161h CDD401                           CALL      PRINT          ;
+0C164h 44                               DEFB      44H            ; PWYS
+0C165h 0E04                             LD        C,4            ; 4. parametry: rok, m-c, dz. m-ca, dzien tyg.
+0C167h CD1302                           CALL      EXPR           ; pobranie czterech parametrów i odlozenie na stos
+0C16Ah 20                               DEFB      20H            ; PWYSW
+0C16Bh                                                           ;
+0C16Bh            SET_DS_4:                                      ;wyswietl komunikat, ustaw date  DS1307/DS3231
+0C16Bh                                                           ; teraz wpis do DS1307/DS3231
+0C16Bh CD9CC0                           CALL      START_I2C
+0C16Eh 3ED0                             LD        A,DS_WR        ; D0
+0C170h CD5CC0                           CALL      ZAP_BAJT
+0C173h 3E03                             LD        A,3            ; wpis od rejestru nr 3. DS1307/DS3231 - "day of week"
+0C175h CD5CC0                           CALL      ZAP_BAJT
+0C178h 0604                             LD        B,4
+0C17Ah FD21F0FF                         LD        IY,DNI_TYG
+0C17Eh 18CA                             JR        SET_DS_31
+0C180h                                                           ;=========
+0C180h                                                           ; FFED-SEK, FFEE-MIN, FFEF-GODZ, FFF0-Dtyg, FFF1-DNIM, FFF2-MIES, FFF3-LATA
+0C180h            SET_AKTUAL:                                    ; wcisnieto F1/Z /gorny lewy/ - wpisz do DS1307/DS3231 date i czas aktualizacji /z CA80/
+0C180h CD9CC0                           CALL      START_I2C
+0C183h 3ED0                             LD        A,DS_WR        ; D0
+0C185h CD5CC0                           CALL      ZAP_BAJT
+0C188h 3E08                             LD        A,8            ; wpis od rejestru 8. DS1307 - pamiec RAM w DS-a  /8 - 3F/ 56 bajtow
+0C18Ah CD5CC0                           CALL      ZAP_BAJT       ; DS3231 inne rejestry!!
+0C18Dh 21F1FF                           LD        HL,DNIM        ; poczatek zapisanej daty w RAM CA80 -dzien. m-c, lata/rok
+0C190h 0603                             LD        B,3
+0C192h            SET_AKT1:                       
+0C192h 7E                               LD        A,(HL)
+0C193h 23                               INC       HL
+0C194h CD5CC0                           CALL      ZAP_BAJT       ; wpis do DS1307/DS3231
+0C197h 10F9                             DJNZ      SET_AKT1
+0C199h 3AEFFF                           LD        A,(GODZ)
+0C19Ch CD5CC0                           CALL      ZAP_BAJT
+0C19Fh 3AEEFF                           LD        A,(MIN)
+0C1A2h CD5CC0                           CALL      ZAP_BAJT
+0C1A5h CDB1C0                           CALL      STOP
+0C1A8h D7                               RST       10H            ; D7 czysc wysw. CA
+0C1A9h 80                               DEFB      80H
+0C1AAh CDF6C1                           CALL      OP_100MS
+0C1ADh 05                               DEFB      5              ; czas na stabilizacje DS1307 po STOP
+0C1AEh C3272D                           JP        WYS_CZAS-9     ; ujeto call INI_LCD ; skok do wysw. czasu z CA88
+0C1B1h                                            
+0C1B1h            SHOW_AKTUAL:                                   ; wcisnieto F4 - pokaz czas i date aktualizacji zegara DS1307
+0C1B1h            SH:                   EQU       0FEF0H         ; tu zapisz odczytane bajty
+0C1B1h CD9CC0                           CALL      START_I2C
+0C1B4h 3ED0                             LD        A,DS_WR        ; adres wyboru DS1307/DS3231
+0C1B6h CD5CC0                           CALL      ZAP_BAJT       ; zapis bajtu i kontrola ACK
+0C1B9h 3E08                             LD        A,8            ; odczyt od rejestru 8 - poczatek RAM w DS1307
+0C1BBh CD5CC0                           CALL      ZAP_BAJT
+0C1BEh DD21F0FE                         LD        IX,SH          ; poczatek odczytanej daty i czasu aktualizacji /zapis w CA80
+0C1C2h CD9CC0                           CALL      START_I2C      ; ponowny start magistrali I2C
+0C1C5h 3ED1                             LD        A,DS_RD
+0C1C7h CD5CC0                           CALL      ZAP_BAJT
+0C1CAh                                                           ; odczyt 5. bajtów: dzien, m-c, rok i godz, min
+0C1CAh 0605                             LD        B,5
+0C1CCh            SH_ODCZ:                        
+0C1CCh C5                               PUSH      BC
+0C1CDh CDC3C0                           CALL      CZYT_BAJT      ; dzien, m-c, rok, godz, min i zapisz w CA, od <sh> 
+0C1D0h C1                               POP       BC             ;   call M_ACK ; potwierdz odebrany bajt
+0C1D1h 10F9                             DJNZ      SH_ODCZ
+0C1D3h CDB1C0                           CALL      STOP
+0C1D6h 21F0FE                           LD        HL,SH
+0C1D9h 7E                               LD        A,(HL)
+0C1DAh DF                               RST       18H            ; DF wysw. A
+0C1DBh 26                               DEFB      26H
+0C1DCh 23                               INC       HL
+0C1DDh 7E                               LD        A,(HL)
+0C1DEh DF                               RST       18H
+0C1DFh 23                               DEFB      23H
+0C1E0h 23                               INC       HL
+0C1E1h 7E                               LD        A,(HL)
+0C1E2h DF                               RST       18H
+0C1E3h 20                               DEFB      20H
+0C1E4h CDF6C1                           CALL      OP_100MS
+0C1E7h 0A                               DEFB      10             ; opoz. ok. 1 sek
+0C1E8h 23                               INC       HL
+0C1E9h D7                               RST       10H            ; D7 czysc wysw. CA
+0C1EAh 80                               DEFB      80H
+0C1EBh 7E                               LD        A,(HL)         ; godz
+0C1ECh DF                               RST       18H
+0C1EDh 24                               DEFB      24H
+0C1EEh 23                               INC       HL
+0C1EFh 7E                               LD        A,(HL)         ; min
+0C1F0h DF                               RST       18H
+0C1F1h 21                               DEFB      21H
+0C1F2h CF                               RST       8              ; CF czekaj na wcisn. klaw.
+0C1F3h C30BC0                           JP        RTC_DS1307
+0C1F6h                                                           ;  opóznienie
+0C1F6h            OP_100MS:                                      ; opózn. x 0,1s+ podaj param. /cd xx yy zz/
+0C1F6h E3                               EX        (SP),HL        ; zz - wielkosc opóznienia
+0C1F7h 7E                               LD        A,(HL)
+0C1F8h 23                               INC       HL
+0C1F9h E3                               EX        (SP),HL
+0C1FAh C5                               PUSH      BC
+0C1FBh E5                               PUSH      HL
+0C1FCh 47                               LD        B,A
+0C1FDh            OP1:                            
+0C1FDh 21183C                           LD        HL,3C18H
+0C200h            OP2:                            
+0C200h 2B                               DEC       HL
+0C201h 7D                               LD        A,L
+0C202h B4                               OR        H
+0C203h 20FB                             JR        NZ,OP2
+0C205h 10F6                             DJNZ      OP1
+0C207h E1                               POP       HL
+0C208h C1                               POP       BC
+0C209h C9                               RET       
